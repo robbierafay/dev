@@ -1,257 +1,195 @@
-import requests
+#!/usr/bin/env python3
+import os
+import sys
 import json
 import copy
-import urllib3
-import os
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
+import urllib3
+from pathlib import Path
 
-# Disable SSL warnings for verify=False
+# --------------------------
+# Disable SSL warnings
+# --------------------------
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --------------------------
-# CONFIGURATION
+# Configuration Defaults
 # --------------------------
-
-OBJECT_TYPES = ["workflowhandlers", "configcontexts", "resourcetemplates", "environmenttemplates"]
-
-MAX_WORKERS = 5  # threads for parallel posting
+PROJECT = "system-catalog"
+OBJECT_TYPES = [
+    "workflowhandlers",
+    "configcontexts",
+    "resourcetemplates",
+    "environmenttemplates"
+]
 VERIFY_SSL = False
 
 # --------------------------
-# HELPERS
+# Helpers
 # --------------------------
 
-def remove_unwanted_fields(item):
-    """Clean object for replication"""
-    cleaned = copy.deepcopy(item)
-
-    # Clean metadata
+def remove_unwanted_fields(obj):
+    cleaned = copy.deepcopy(obj)
     meta = cleaned.get("metadata", {})
-    for field in ["id", "modifiedAt", "createdAt", "projectID"]:
+    for field in ["id", "modifiedAt", "createdAt", "projectID", "createdBy", "modifiedBy"]:
         meta.pop(field, None)
+    meta["project"] = PROJECT
     cleaned["metadata"] = meta
-
-    # Remove status
+    # Remove sharing if present
+    if "spec" in cleaned and isinstance(cleaned["spec"], dict):
+        cleaned["spec"].pop("sharing", None)
+    # Remove top-level status if present
     cleaned.pop("status", None)
-
-    # Remove sharing block from spec
-    spec = cleaned.get("spec", {})
-    if "sharing" in spec:
-        spec.pop("sharing")
-    cleaned["spec"] = spec
-
     return cleaned
 
+def build_source_url(base_url: str, project: str, object_type: str) -> str:
+    return f"{base_url.rstrip('/')}/apis/eaas.envmgmt.io/v1/projects/{project}/{object_type}"
 
-def fetch_objects_from_url(url, api_key):
-    """Fetch objects from URL"""
+def fetch_objects_from_url(url, api_key, debug=False):
     headers = {"accept": "application/json", "X-API-KEY": api_key}
-    print(f"📥 Fetching objects from {url} ...")
-    response = requests.get(url, headers=headers, verify=VERIFY_SSL)
-    response.raise_for_status()
-    return response.json()
+    resp = requests.get(url, headers=headers, verify=VERIFY_SSL)
+    resp.raise_for_status()
+    data = resp.json()
+    if debug:
+        print(f"\n[DEBUG] Raw GET data from {url}:\n{json.dumps(data, indent=2)}")
+    return data.get("items", [])
 
+def fetch_versions_from_url(base_url, project, object_type, name, api_key, debug=False):
+    version_url = f"{base_url.rstrip('/')}/apis/eaas.envmgmt.io/v1/projects/{project}/{object_type}/{name}/versions"
+    headers = {"accept": "application/json", "X-API-KEY": api_key}
+    resp = requests.get(version_url, headers=headers, verify=VERIFY_SSL)
+    resp.raise_for_status()
+    data = resp.json()
+    versions = data.get("items", [])
+    if debug:
+        print(f"\n[DEBUG] Versions for {name} ({object_type}): {[v.get('spec', {}).get('version', '') for v in versions]}")
+    return versions
 
-def fetch_objects_from_disk(source_dir, obj_type):
-    """Load all JSON objects from source_dir/<obj_type>, ignoring raw subdirectory"""
-    path = os.path.join(source_dir, obj_type)
-    if not os.path.exists(path):
-        print(f"⚠️  Source directory does not exist for {obj_type}: {path}")
-        return []
+def save_to_disk(obj, target_dir, object_type, name, version=None, raw=False):
+    base_dir = Path(target_dir) / object_type
+    if raw:
+        base_dir = base_dir / "raw"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{name}"
+    if version:
+        filename += f"-{version}"
+    filename += ".json"
+    file_path = base_dir / filename
+    with open(file_path, "w") as f:
+        json.dump(obj, f, indent=2)
+    return file_path
 
-    items = []
-    for filename in os.listdir(path):
-        filepath = os.path.join(path, filename)
-        if os.path.isdir(filepath) and os.path.basename(filepath) == "raw":
-            continue
-        if filename.endswith(".json"):
-            try:
-                with open(filepath, "r") as f:
-                    obj = json.load(f)
-                    items.append(obj)
-            except Exception as e:
-                print(f"❌ Failed to load {filepath}: {e}")
-    print(f"📥 Loaded {len(items)} objects from disk for {obj_type}")
-    return items
-
-
-def post_object_to_url(target_url, obj, api_key):
-    """POST object to URL"""
+def post_object_to_url(obj, url, api_key, debug=False):
     headers = {"accept": "application/json", "Content-Type": "application/json", "X-API-KEY": api_key}
     name = obj["metadata"].get("name", "<unknown>")
-
-    try:
-        resp = requests.post(target_url, headers=headers, verify=VERIFY_SSL, json=obj)
-        if resp.status_code in [200, 201]:
-            return True, name, "Successfully created"
-        elif resp.status_code == 409:
-            return True, name, "Already exists (409 CONFLICT)"
-        else:
-            return False, name, f"Failed with status {resp.status_code}: {resp.text}"
-    except Exception as e:
-        return False, name, f"Exception: {str(e)}"
-
-
-def write_object_to_disk(target_dir, obj_type, obj, raw_blob=None):
-    """Write object JSON to target_dir/<obj_type>/<name>.json; optionally store raw_blob in raw subdir"""
-    obj_name = obj["metadata"].get("name", "unknown")
-    obj_path = os.path.join(target_dir, obj_type)
-    os.makedirs(obj_path, exist_ok=True)
-    cleaned_file = os.path.join(obj_path, f"{obj_name}.json")
-
-    try:
-        with open(cleaned_file, "w") as f:
-            json.dump(obj, f, indent=2)
-
-        if raw_blob:
-            raw_path = os.path.join(obj_path, "raw")
-            os.makedirs(raw_path, exist_ok=True)
-            raw_file = os.path.join(raw_path, f"{obj_name}.json")
-            with open(raw_file, "w") as f:
-                json.dump(raw_blob, f, indent=2)
-
-        return True, obj_name, "Written to disk"
-    except Exception as e:
-        return False, obj_name, f"Failed to write to disk: {e}"
-
-
-def replicate_objects(obj_type, source_base, target_base, source_api_key=None, target_api_key=None, debug=False):
-    """Replicate objects for a given type from source to target (URL or disk)"""
-    source_is_dir = not source_base.startswith("http")
-    target_is_dir = not target_base.startswith("http")
-
-    raw_dir = os.path.join(target_base, obj_type, "raw") if target_is_dir else None
-    if raw_dir:
-        os.makedirs(raw_dir, exist_ok=True)
-
-    # Fetch objects
-    if source_is_dir:
-        items = fetch_objects_from_disk(source_base, obj_type)
-        data_dump = None
+    resp = requests.post(url, headers=headers, verify=VERIFY_SSL, json=obj)
+    if debug:
+        print(f"\n[DEBUG] POST payload for {name}:\n{json.dumps(obj, indent=2)}")
+    if resp.status_code in [200, 201]:
+        return True, None
     else:
-        url = f"{source_base}/apis/eaas.envmgmt.io/v1/projects/system-catalog/{obj_type}"
-        data = fetch_objects_from_url(url, source_api_key)
-        items = data.get("items", [])
+        return False, f"{resp.status_code}: {resp.text}"
 
+def replicate_objects(object_type, source, target, source_api_key, target_api_key, debug=False):
+    successes = []
+    failures = []
+
+    source_is_url = source.startswith("http")
+    target_is_url = target.startswith("http")
+
+    # Determine source items
+    if source_is_url:
+        url = build_source_url(source, PROJECT, object_type)
+        items = fetch_objects_from_url(url, source_api_key, debug)
         # Save raw GET response if target is disk
-        if target_is_dir:
-            raw_dump_file = os.path.join(raw_dir, "raw-dump-get.json")
-            with open(raw_dump_file, "w") as f:
-                json.dump(data, f, indent=2)
-            print(f"💾 Saved raw GET response to {raw_dump_file}")
+        if not target_is_url:
+            raw_get_path = Path(target) / object_type / "raw-dump-get.json"
+            raw_get_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(raw_get_path, "w") as f:
+                json.dump(items, f, indent=2)
+    else:
+        # Read JSON files from disk
+        object_dir = Path(source) / object_type
+        items = []
+        for file_path in object_dir.glob("*.json"):
+            with open(file_path) as f:
+                items.append(json.load(f))
 
-    print(f"Found {len(items)} {obj_type} objects")
+    for item in items:
+        name = item["metadata"].get("name", "<unknown>")
+        versions = []
+        if source_is_url:
+            # Fetch all versions
+            try:
+                versions = fetch_versions_from_url(source, PROJECT, object_type, name, source_api_key, debug)
+            except Exception as e:
+                print(f"⚠️ Failed to fetch versions for {name}: {e}")
+                versions = [item]
+        else:
+            versions = [item]
 
-    success_list = []
-    failure_list = []
+        for version_obj in versions:
+            version_name = version_obj.get("spec", {}).get("version")
+            cleaned = remove_unwanted_fields(version_obj)
 
-    # Clean objects for posting/writing
-    cleaned_objects = [remove_unwanted_fields(obj) for obj in items]
-
-    # Parallel processing
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_index = {}
-        for idx, cleaned_obj in enumerate(cleaned_objects):
-            raw_obj = items[idx] if target_is_dir else None
-            if target_is_dir:
-                future = executor.submit(write_object_to_disk, target_base, obj_type, cleaned_obj, raw_blob=raw_obj)
-            else:
-                target_url = f"{target_base}/apis/eaas.envmgmt.io/v1/projects/system-catalog/{obj_type}"
-                future = executor.submit(post_object_to_url, target_url, cleaned_obj, target_api_key)
-            future_to_index[future] = idx
-
-        for future in as_completed(future_to_index):
-            idx = future_to_index[future]
-            raw_obj = items[idx] if target_is_dir else None
-            cleaned_obj = cleaned_objects[idx]
-            success, name, message = future.result()
-
+            # Debug print
             if debug:
-                print(f"\n================ {obj_type} Object #{idx+1} (RAW) ================\n")
-                print(json.dumps(raw_obj, indent=2) if raw_obj else "(source from URL)")
-                print(f"\n================ {obj_type} Object #{idx+1} (CLEANED) ================\n")
-                print(json.dumps(cleaned_obj, indent=2))
+                print(f"\n[DEBUG] Raw object:\n{json.dumps(version_obj, indent=2)}")
+                print(f"\n[DEBUG] Cleaned object:\n{json.dumps(cleaned, indent=2)}")
 
-            if success:
-                success_list.append((name, message))
-                print(f"✅ {message}: {name}")
+            # Save to disk
+            if not target_is_url:
+                save_to_disk(version_obj, target, object_type, name, version_name, raw=True)
+                save_to_disk(cleaned, target, object_type, name, version_name, raw=False)
+
+            # Post to URL
+            if target_is_url:
+                target_url = build_source_url(target, PROJECT, object_type)
+                success, error = post_object_to_url(cleaned, target_url, target_api_key, debug)
+                if success:
+                    successes.append(f"{object_type}/{name} ({version_name})")
+                else:
+                    failures.append(f"{object_type}/{name} ({version_name}) => {error}")
             else:
-                failure_list.append((name, message))
-                print(f"❌ {message}: {name}")
+                successes.append(f"{object_type}/{name} ({version_name})")
 
-    return success_list, failure_list
-
+    return successes, failures
 
 # --------------------------
-# MAIN FLOW
+# Main
 # --------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Replicate system-catalog objects with disk/URL support.")
-    parser.add_argument("--workflowhandlers", action="store_true")
-    parser.add_argument("--configcontexts", action="store_true")
-    parser.add_argument("--resourcetemplates", action="store_true")
-    parser.add_argument("--environmenttemplates", action="store_true")
-    parser.add_argument("--all", action="store_true")
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--source", required=True, help="Source base URL or directory")
-    parser.add_argument("--target", required=True, help="Target base URL or directory")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", required=True, help="Source URL or directory")
+    parser.add_argument("--target", required=True, help="Target URL or directory")
+    parser.add_argument("--type", required=True, choices=OBJECT_TYPES, help="Object type to replicate")
+    parser.add_argument("--debug", action="store_true", help="Enable debug output")
     args = parser.parse_args()
 
-    # Determine object types
-    object_types = []
-    if args.workflowhandlers or args.all:
-        object_types.append("workflowhandlers")
-    if args.configcontexts or args.all:
-        object_types.append("configcontexts")
-    if args.resourcetemplates or args.all:
-        object_types.append("resourcetemplates")
-    if args.environmenttemplates or args.all:
-        object_types.append("environmenttemplates")
+    source_api_key = os.getenv("SOURCE_API_KEY")
+    target_api_key = os.getenv("TARGET_API_KEY")
+    if not source_api_key or not target_api_key:
+        print("❌ Environment variables SOURCE_API_KEY and TARGET_API_KEY must be set")
+        sys.exit(1)
 
-    if not object_types:
-        print("No object types selected. Use --workflowhandlers, --configcontexts, --resourcetemplates, --environmenttemplates, or --all.")
-        return
+    successes, failures = replicate_objects(
+        args.type,
+        args.source,
+        args.target,
+        source_api_key,
+        target_api_key,
+        debug=args.debug
+    )
 
-    source_is_dir = not args.source.startswith("http")
-    target_is_dir = not args.target.startswith("http")
-
-    if not source_is_dir and not os.environ.get("SOURCE_API_KEY"):
-        raise ValueError("SOURCE_API_KEY environment variable must be set for source URL")
-    if not target_is_dir and not os.environ.get("TARGET_API_KEY"):
-        raise ValueError("TARGET_API_KEY environment variable must be set for target URL")
-
-    source_api_key = os.environ.get("SOURCE_API_KEY")
-    target_api_key = os.environ.get("TARGET_API_KEY")
-
-    overall_success = []
-    overall_failures = []
-
-    for obj_type in object_types:
-        print(f"\n🔄 Replicating {obj_type} ...")
-        success, failures = replicate_objects(
-            obj_type,
-            source_base=args.source,
-            target_base=args.target,
-            source_api_key=source_api_key,
-            target_api_key=target_api_key,
-            debug=args.debug
-        )
-        overall_success.extend(success)
-        overall_failures.extend(failures)
-
-    # Summary
-    print("\n==================== REPLICATION SUMMARY ====================\n")
-    print(f"Total Successful: {len(overall_success)}")
-    for name, msg in overall_success:
-        print(f"✅ {name}: {msg}")
-
-    print(f"\nTotal Failures: {len(overall_failures)}")
-    for name, msg in overall_failures:
-        print(f"❌ {name}: {msg}")
-
-    print("\n==============================================================\n")
+    print("\n==================== Replication Summary ====================")
+    print(f"✅ Successes ({len(successes)}):")
+    for s in successes:
+        print(f"  - {s}")
+    print(f"❌ Failures ({len(failures)}):")
+    for f in failures:
+        print(f"  - {f}")
 
 
 if __name__ == "__main__":
