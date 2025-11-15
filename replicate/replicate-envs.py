@@ -2,8 +2,8 @@
 """
 Replicate environment management objects between API endpoints or to/from disk.
 
-This script replicates workflowhandlers, configcontexts, resourcetemplates, and 
-environmenttemplates between different API endpoints or saves/loads them from disk.
+This script replicates workflowhandlers, configcontexts, resourcetemplates, 
+environmenttemplates, and computeprofiles between different API endpoints or saves/loads them from disk.
 Objects are cleaned (removing IDs, timestamps, sharing, agents, etc.) before replication.
 
 Requirements:
@@ -18,7 +18,7 @@ Arguments:
     --source    Source URL (e.g., https://console.compute.customer.cloud) or directory path
     --target    Target URL (e.g., https://console.compute-uat.customer.cloud) or directory path  
     --type      Object type to replicate: workflowhandlers, configcontexts,
-                resourcetemplates, or environmenttemplates
+                resourcetemplates, environmenttemplates, or computeprofiles
     --debug     Enable debug output (optional)
 
 Examples:
@@ -85,9 +85,19 @@ OBJECT_TYPES = [
     "workflowhandlers",
     "configcontexts",
     "resourcetemplates",
-    "environmenttemplates"
+    "environmenttemplates",
+    "computeprofiles"
 ]
 VERIFY_SSL = False
+
+# API namespace mapping: maps object types to their API namespace
+API_NAMESPACE_MAP = {
+    "workflowhandlers": "eaas.envmgmt.io",
+    "configcontexts": "eaas.envmgmt.io",
+    "resourcetemplates": "eaas.envmgmt.io",
+    "environmenttemplates": "eaas.envmgmt.io",
+    "computeprofiles": "paas.envmgmt.io"
+}
 
 # --------------------------
 # Helpers
@@ -117,7 +127,8 @@ def remove_unwanted_fields(obj):
     return cleaned
 
 def build_source_url(base_url: str, project: str, object_type: str) -> str:
-    return f"{base_url.rstrip('/')}/apis/eaas.envmgmt.io/v1/projects/{project}/{object_type}"
+    api_namespace = API_NAMESPACE_MAP.get(object_type, "eaas.envmgmt.io")
+    return f"{base_url.rstrip('/')}/apis/{api_namespace}/v1/projects/{project}/{object_type}"
 
 def fetch_objects_from_url(url, api_key, debug=False):
     # Append ?limit=100&offset=0&order=DESC&orderBy=createdAt to the url
@@ -131,7 +142,8 @@ def fetch_objects_from_url(url, api_key, debug=False):
     return data.get("items", [])
 
 def fetch_versions_from_url(base_url, project, object_type, name, api_key, debug=False):
-    version_url = f"{base_url.rstrip('/')}/apis/eaas.envmgmt.io/v1/projects/{project}/{object_type}/{name}/versions"
+    api_namespace = API_NAMESPACE_MAP.get(object_type, "eaas.envmgmt.io")
+    version_url = f"{base_url.rstrip('/')}/apis/{api_namespace}/v1/projects/{project}/{object_type}/{name}/versions"
     headers = {"accept": "application/json", "X-API-KEY": api_key}
     resp = requests.get(version_url, headers=headers, verify=VERIFY_SSL)
     resp.raise_for_status()
@@ -200,12 +212,15 @@ def replicate_objects(object_type, source, target, source_api_key, target_api_ke
         name = item["metadata"].get("name", "<unknown>")
         versions = []
         if source_is_url:
-            # Fetch all versions
-            try:
-                versions = fetch_versions_from_url(source, PROJECT, object_type, name, source_api_key, debug)
-            except Exception as e:
-                print(f"⚠️ Failed to fetch versions for {name}: {e}")
+            # Fetch all versions (computeprofiles don't support versions)
+            if object_type == "computeprofiles":
                 versions = [item]
+            else:
+                try:
+                    versions = fetch_versions_from_url(source, PROJECT, object_type, name, source_api_key, debug)
+                except Exception as e:
+                    print(f"⚠️ Failed to fetch versions for {name}: {e}")
+                    versions = [item]
         else:
             versions = [item]
 
