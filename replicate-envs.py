@@ -47,6 +47,8 @@ def build_source_url(base_url: str, project: str, object_type: str) -> str:
     return f"{base_url.rstrip('/')}/apis/eaas.envmgmt.io/v1/projects/{project}/{object_type}"
 
 def fetch_objects_from_url(url, api_key, debug=False):
+    # Append ?limit=100&offset=0&order=DESC&orderBy=createdAt to the url
+    url = f"{url}?limit=100&offset=0&order=DESC&orderBy=createdAt"
     headers = {"accept": "application/json", "X-API-KEY": api_key}
     resp = requests.get(url, headers=headers, verify=VERIFY_SSL)
     resp.raise_for_status()
