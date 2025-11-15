@@ -85,85 +85,99 @@ SOURCE_API_KEY="key1" TARGET_API_KEY="key2" python3 replicate-envs.py --source .
 
 ### 1. Replicate from API to Local Directory
 
-Download environment templates from an API endpoint and save them to a local directory:
+Download workflow handlers from an API endpoint and save them to a local directory:
 
 ```bash
-export SOURCE_API_KEY="your-source-api-key"
-export TARGET_API_KEY="dummy"  # Not used when target is disk
-python3 replicate-envs.py \
-  --source "https://api.example.com" \
-  --target "./output" \
-  --type "environmenttemplates"
+export SOURCE_API_KEY="source-api-key-here"
+export TARGET_API_KEY="target-api-key-here"
+python replicate-envs.py --source https://console.compute.customer.cloud \
+                          --target ./output \
+                          --type workflowhandlers
 ```
 
 This will:
-- Fetch all environment templates from the API
-- Download all versions of each template
-- Save raw versions to `./output/environmenttemplates/raw/`
-- Save cleaned versions to `./output/environmenttemplates/`
-- Save the raw GET response to `./output/environmenttemplates/raw-dump-get.json`
+- Fetch all workflow handlers from the API
+- Download all versions of each handler
+- Save raw versions to `./output/workflowhandlers/raw/`
+- Save cleaned versions to `./output/workflowhandlers/`
+- Save the raw GET response to `./output/workflowhandlers/raw-dump-get.json`
+- Create the output directory if it doesn't exist
 
 ### 2. Replicate from Local Directory to API
 
-Upload objects from local JSON files to an API endpoint:
+Upload resource templates from local JSON files to an API endpoint:
 
 ```bash
-export SOURCE_API_KEY="dummy"  # Not used when source is disk
-export TARGET_API_KEY="your-target-api-key"
-python3 replicate-envs.py \
-  --source "./local-objects" \
-  --target "https://api.example.com" \
-  --type "resourcetemplates"
+export SOURCE_API_KEY="source-api-key-here"
+export TARGET_API_KEY="target-api-key-here"
+python replicate-envs.py --source ./input \
+                          --target https://console.compute-uat.customer.cloud \
+                          --type resourcetemplates
 ```
 
 This will:
-- Read all JSON files from `./local-objects/resourcetemplates/`
+- Read all JSON files from `./input/resourcetemplates/`
+- Clean each object (removing IDs, timestamps, sharing, agents, etc.)
+- POST each cleaned object to the target API
+- Display success/failure summary at the end
+
+### 3. Replicate from One API to Another API
+
+Copy environment templates directly from one API endpoint to another:
+
+```bash
+export SOURCE_API_KEY="source-api-key-here"
+export TARGET_API_KEY="target-api-key-here"
+python replicate-envs.py --source https://console.compute.customer.cloud \
+                          --target https://console.compute-uat.customer.cloud \
+                          --type environmenttemplates
+```
+
+This will:
+- Fetch all environment templates from the source API
+- Fetch all versions of each template
 - Clean each object
 - POST each cleaned object to the target API
+- Display success/failure summary
 
-### 3. Replicate from API to API
-
-Copy objects directly from one API endpoint to another:
-
-```bash
-export SOURCE_API_KEY="source-api-key"
-export TARGET_API_KEY="target-api-key"
-python3 replicate-envs.py \
-  --source "https://source-api.example.com" \
-  --target "https://target-api.example.com" \
-  --type "workflowhandlers"
-```
-
-### 4. Replicate from Local to Local
-
-Copy and clean objects from one local directory to another:
-
-```bash
-export SOURCE_API_KEY="dummy"
-export TARGET_API_KEY="dummy"
-python3 replicate-envs.py \
-  --source "./source-dir" \
-  --target "./target-dir" \
-  --type "configcontexts"
-```
-
-### 5. Enable Debug Mode
+### 4. Replicate with Debug Output
 
 Get detailed output for troubleshooting:
 
 ```bash
-python3 replicate-envs.py \
-  --source "https://api.example.com" \
-  --target "./output" \
-  --type "environmenttemplates" \
-  --debug
+export SOURCE_API_KEY="source-api-key-here"
+export TARGET_API_KEY="target-api-key-here"
+python replicate-envs.py --source https://console.compute.customer.cloud \
+                          --target ./output \
+                          --type configcontexts \
+                          --debug
 ```
 
 Debug mode shows:
-- Raw API responses
+- Raw API responses from GET requests
 - Raw object data before cleaning
 - Cleaned object data after transformation
-- POST payloads when uploading
+- POST payloads when uploading to API
+- Version information for each object
+
+### 5. Copy Between Local Directories
+
+Copy and clean objects from one local directory to another:
+
+```bash
+export SOURCE_API_KEY="source-api-key-here"
+export TARGET_API_KEY="target-api-key-here"
+python replicate-envs.py --source ./input \
+                          --target ./output \
+                          --type workflowhandlers
+```
+
+This will:
+- Read all JSON files from `./input/workflowhandlers/`
+- Clean each object
+- Save raw versions to `./output/workflowhandlers/raw/`
+- Save cleaned versions to `./output/workflowhandlers/`
+- Create the output directory structure if it doesn't exist
 
 ## Object Types
 

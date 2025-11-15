@@ -1,4 +1,68 @@
 #!/usr/bin/env python3
+"""
+Replicate environment management objects between API endpoints or to/from disk.
+
+This script replicates workflowhandlers, configcontexts, resourcetemplates, and 
+environmenttemplates between different API endpoints or saves/loads them from disk.
+Objects are cleaned (removing IDs, timestamps, sharing, agents, etc.) before replication.
+
+Requirements:
+    - Python 3
+    - Environment variables: SOURCE_API_KEY and TARGET_API_KEY must be set
+    - Dependencies: requests, urllib3
+
+Usage:
+    python replicate-envs.py --source SOURCE --target TARGET --type OBJECT_TYPE [--debug]
+
+Arguments:
+    --source    Source URL (e.g., https://console.compute.customer.cloud) or directory path
+    --target    Target URL (e.g., https://console.compute-uat.customer.cloud) or directory path  
+    --type      Object type to replicate: workflowhandlers, configcontexts,
+                resourcetemplates, or environmenttemplates
+    --debug     Enable debug output (optional)
+
+Examples:
+
+    1. Replicate from API to local directory:
+       export SOURCE_API_KEY="source-api-key-here"
+       export TARGET_API_KEY="target-api-key-here"
+       python replicate-envs.py --source https://console.compute.customer.cloud \
+                                 --target ./output \
+                                 --type workflowhandlers
+
+    2. Replicate from local directory to API:
+       python replicate-envs.py --source ./input \
+                                 --target https://console.compute-uat.customer.cloud \
+                                 --type resourcetemplates
+
+    3. Replicate from one API to another API:
+       python replicate-envs.py --source https://console.compute.customer.cloud \
+                                 --target https://console.compute-uat.customer.cloud \
+                                 --type environmenttemplates
+
+    4. Replicate with debug output:
+       python replicate-envs.py --source https://console.compute.customer.cloud \
+                                 --target ./output \
+                                 --type configcontexts \
+                                 --debug
+
+    5. Copy between local directories:
+       python replicate-envs.py --source ./input \
+                                 --target ./output \
+                                 --type workflowhandlers
+
+Output:
+    When target is a directory:
+        - Creates directory structure: target/OBJECT_TYPE/
+        - Saves raw versions: target/OBJECT_TYPE/raw/NAME-VERSION.json
+        - Saves cleaned versions: target/OBJECT_TYPE/NAME-VERSION.json
+        - Saves raw GET response: target/OBJECT_TYPE/raw-dump-get.json
+
+    When target is an API URL:
+        - POSTs cleaned objects to the target API
+        - Displays success/failure summary at the end
+"""
+
 import os
 import sys
 import json
@@ -108,6 +172,11 @@ def replicate_objects(object_type, source, target, source_api_key, target_api_ke
 
     source_is_url = source.startswith("http")
     target_is_url = target.startswith("http")
+
+    # Create target directory if it doesn't exist (only if target is a directory path)
+    if not target_is_url:
+        target_path = Path(target)
+        target_path.mkdir(parents=True, exist_ok=True)
 
     # Determine source items
     if source_is_url:
