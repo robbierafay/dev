@@ -40,6 +40,14 @@ def remove_unwanted_fields(obj):
     if "spec" in cleaned and isinstance(cleaned["spec"], dict):
         cleaned["spec"].pop("sharing", None)
         cleaned["spec"].pop("agents", None)
+        # Remove agents from hooks if present
+        hooks = cleaned["spec"].get("hooks")
+        if hooks and isinstance(hooks, dict):
+            for hook_type, hook_list in hooks.items():
+                if isinstance(hook_list, list):
+                    for hook_item in hook_list:
+                        if isinstance(hook_item, dict):
+                            hook_item.pop("agents", None)
     # Remove top-level status if present
     cleaned.pop("status", None)
     return cleaned
