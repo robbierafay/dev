@@ -36,9 +36,10 @@ def remove_unwanted_fields(obj):
         meta.pop(field, None)
     meta["project"] = PROJECT
     cleaned["metadata"] = meta
-    # Remove sharing if present
+    # Remove sharing and agents if present
     if "spec" in cleaned and isinstance(cleaned["spec"], dict):
         cleaned["spec"].pop("sharing", None)
+        cleaned["spec"].pop("agents", None)
     # Remove top-level status if present
     cleaned.pop("status", None)
     return cleaned
