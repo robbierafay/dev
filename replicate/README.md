@@ -1,6 +1,6 @@
 # Replicate Environments
 
-A Python utility for replicating environment management objects (workflow handlers, config contexts, resource templates, and environment templates) between different sources and targets. The tool supports replication from/to API endpoints or local file systems, with automatic data cleaning and version management.
+A Python utility for replicating environment management objects (workflow handlers, config contexts, resource templates, environment templates, compute profiles, and service profiles) between different sources and targets. The tool supports replication from/to API endpoints or local file systems, with automatic data cleaning and version management.
 
 ## Overview
 
@@ -15,8 +15,8 @@ This tool facilitates the migration and replication of environment management ob
 ## Features
 
 - **Flexible Source/Target**: Supports both HTTP(S) URLs and local directories
-- **Multiple Object Types**: Handles workflow handlers, config contexts, resource templates, and environment templates
-- **Version Management**: Automatically fetches and processes all versions of objects
+- **Multiple Object Types**: Handles workflow handlers, config contexts, resource templates, environment templates, compute profiles, and service profiles
+- **Version Management**: Automatically fetches and processes all versions of objects (where supported)
 - **Data Cleaning**: Removes unwanted metadata fields, sharing configurations, and agent assignments
 - **Dual Output**: When saving to disk, saves both raw and cleaned versions
 - **Debug Mode**: Detailed logging for troubleshooting
@@ -55,7 +55,7 @@ python3 replicate-envs.py --source <SOURCE> --target <TARGET> --type <OBJECT_TYP
 
 - `--source`: Source location (URL starting with `http://` or `https://`, or local directory path)
 - `--target`: Target location (URL starting with `http://` or `https://`, or local directory path)
-- `--type`: Object type to replicate (one of: `workflowhandlers`, `configcontexts`, `resourcetemplates`, `environmenttemplates`)
+- `--type`: Object type to replicate (one of: `workflowhandlers`, `configcontexts`, `resourcetemplates`, `environmenttemplates`, `computeprofiles`, `serviceprofiles`)
 
 ### Optional Arguments
 
@@ -179,6 +179,42 @@ This will:
 - Save cleaned versions to `./output/workflowhandlers/`
 - Create the output directory structure if it doesn't exist
 
+### 6. Replicate Compute Profiles
+
+Replicate compute profiles from an API endpoint:
+
+```bash
+export SOURCE_API_KEY="source-api-key-here"
+export TARGET_API_KEY="target-api-key-here"
+python replicate-envs.py --source https://console.compute.sharonai.cloud \
+                          --target ./output \
+                          --type computeprofiles
+```
+
+This will:
+- Fetch all compute profiles from the API (using `paas.envmgmt.io` namespace)
+- Process each profile (no version fetching, as compute profiles don't support versions)
+- Save raw versions to `./output/computeprofiles/raw/`
+- Save cleaned versions to `./output/computeprofiles/`
+
+### 7. Replicate Service Profiles
+
+Replicate service profiles from an API endpoint:
+
+```bash
+export SOURCE_API_KEY="source-api-key-here"
+export TARGET_API_KEY="target-api-key-here"
+python replicate-envs.py --source https://console.compute.sharonai.cloud \
+                          --target ./output \
+                          --type serviceprofiles
+```
+
+This will:
+- Fetch all service profiles from the API (using `paas.envmgmt.io` namespace)
+- Process each profile (no version fetching, as service profiles don't support versions)
+- Save raw versions to `./output/serviceprofiles/raw/`
+- Save cleaned versions to `./output/serviceprofiles/`
+
 ## Object Types
 
 The following object types are supported:
@@ -187,6 +223,16 @@ The following object types are supported:
 - `configcontexts`: Configuration context objects
 - `resourcetemplates`: Resource template definitions
 - `environmenttemplates`: Environment template definitions
+- `computeprofiles`: Compute profile definitions (no version support)
+- `serviceprofiles`: Service profile definitions (no version support)
+
+### Version Support
+
+Most object types support multiple versions, and the tool will automatically fetch and process all versions. However, the following object types do not support versions:
+- `computeprofiles`
+- `serviceprofiles`
+
+For these object types, the tool will process only the base object without attempting to fetch versions.
 
 ## Data Cleaning
 
@@ -250,18 +296,28 @@ output/
 The tool constructs API endpoints using the following format:
 
 ```
-{base_url}/apis/eaas.envmgmt.io/v1/projects/{project}/{object_type}
+{base_url}/apis/{api_namespace}/v1/projects/{project}/{object_type}
 ```
 
 Where:
 - `base_url`: The source/target URL you provide
+- `api_namespace`: API namespace based on object type (see below)
 - `project`: Hardcoded as `"system-catalog"` (configurable in code)
 - `object_type`: The object type specified with `--type`
 
-For fetching versions:
+### API Namespaces
+
+Different object types use different API namespaces:
+
+- **eaas.envmgmt.io**: Used for `workflowhandlers`, `configcontexts`, `resourcetemplates`, `environmenttemplates`
+- **paas.envmgmt.io**: Used for `computeprofiles`, `serviceprofiles`
+
+For fetching versions (only for object types that support versions):
 ```
-{base_url}/apis/eaas.envmgmt.io/v1/projects/{project}/{object_type}/{name}/versions
+{base_url}/apis/{api_namespace}/v1/projects/{project}/{object_type}/{name}/versions
 ```
+
+Note: `computeprofiles` and `serviceprofiles` do not support version endpoints.
 
 ## API Query Parameters
 

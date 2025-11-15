@@ -3,7 +3,7 @@
 Replicate environment management objects between API endpoints or to/from disk.
 
 This script replicates workflowhandlers, configcontexts, resourcetemplates, 
-environmenttemplates, and computeprofiles between different API endpoints or saves/loads them from disk.
+environmenttemplates, computeprofiles, and serviceprofiles between different API endpoints or saves/loads them from disk.
 Objects are cleaned (removing IDs, timestamps, sharing, agents, etc.) before replication.
 
 Requirements:
@@ -18,7 +18,7 @@ Arguments:
     --source    Source URL (e.g., https://console.compute.customer.cloud) or directory path
     --target    Target URL (e.g., https://console.compute-uat.customer.cloud) or directory path  
     --type      Object type to replicate: workflowhandlers, configcontexts,
-                resourcetemplates, environmenttemplates, or computeprofiles
+                resourcetemplates, environmenttemplates, computeprofiles, or serviceprofiles
     --debug     Enable debug output (optional)
 
 Examples:
@@ -86,7 +86,8 @@ OBJECT_TYPES = [
     "configcontexts",
     "resourcetemplates",
     "environmenttemplates",
-    "computeprofiles"
+    "computeprofiles",
+    "serviceprofiles"
 ]
 VERIFY_SSL = False
 
@@ -96,7 +97,8 @@ API_NAMESPACE_MAP = {
     "configcontexts": "eaas.envmgmt.io",
     "resourcetemplates": "eaas.envmgmt.io",
     "environmenttemplates": "eaas.envmgmt.io",
-    "computeprofiles": "paas.envmgmt.io"
+    "computeprofiles": "paas.envmgmt.io",
+    "serviceprofiles": "paas.envmgmt.io"
 }
 
 # --------------------------
@@ -212,8 +214,8 @@ def replicate_objects(object_type, source, target, source_api_key, target_api_ke
         name = item["metadata"].get("name", "<unknown>")
         versions = []
         if source_is_url:
-            # Fetch all versions (computeprofiles don't support versions)
-            if object_type == "computeprofiles":
+            # Fetch all versions (computeprofiles and serviceprofiles don't support versions)
+            if object_type in ["computeprofiles", "serviceprofiles"]:
                 versions = [item]
             else:
                 try:
